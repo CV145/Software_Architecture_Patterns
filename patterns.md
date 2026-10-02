@@ -138,3 +138,81 @@ Deviation 2: Fraud analyst case lookups
 Deviation 3: Fast feature state retrieval
 - What: Fraud Detection Service reads recent customer spending directly from an in-memory cache using a synchronous socket call.
 - Why: Scoring each transaction requires checking how many payments the user made in the last 10 minutes. A synchronous in-memory read completes in less than 2ms. Firing an asynchronous event would add latency.
+
+
+--- Fraud Analyst Frontend ---
+
+```mermaid
+graph TD
+    subgraph "Analyst Browser Client"
+        UI["Virtual Scrolling List<br/>(Only Renders Visible Rows)"]
+        ClientCache[("Client Memory Cache<br/>(Stale-While-Revalidate)")]
+    end
+
+    subgraph "Edge Gateway"
+        BFF["Backend-for-Frontend (BFF)"]
+    end
+
+    subgraph "Core Services"
+        S3["Alert Service"]
+        S4["Historical Analytics & Audit Service"]
+    end
+
+    S3 -->|"1. Push New Alert"| BFF
+    BFF -->|"2. Lightweight Alert Badge (WebSocket)"| UI
+    
+    UI -->|"3. Check Cache First"| ClientCache
+    ClientCache -.->|"4. Cache Miss: GET /cases/{id}"| BFF
+    BFF -->|"5. Fetch Full Dossier"| S4
+    BFF -->|"6. Return Details"| ClientCache
+    ClientCache -->|"7. Display Instant Details"| UI
+
+```
+
+The frontend will pair a Backend-For-Frontend (BFF) with client-side caching and list virtualization (rendering only what is visible) to improve responsiveness and reduce network overhead. The BFF maintains a persistent WebSocket connection to push light alert notifications to the browser as soon as they are generated. For viewing case details and customer histories, the client uses a Stale-While-Revalidate (SWR) caching strategy which serves previously viewed records instantly from memory while refreshing them in the background. 
+
+--- Observability ---
+
+- Solution for aggregating logs, traces, and metrics across the solution: OpenTelemetry is an open source observability framework that can generate, collect, and export traces, metrics, and logs. How can it be used in this architecture? To make the system observable, it needs to be instrumented i.e the code must emit traces, metrics, and logs. This instrumented data is then sent to an observability backend. The OpenTelemetry Collector offers an implementation of how to receive, process, and export telemetry data. An agent is a Collector instance. A gateway is a standalone service clustered behind a load balancer and acts as the central hub that receives telemetry data from several agents to deliver to the final backend. 
+- Key metrics to use for alerting: There are four principle signals to monitor: latency, traffic, errors, and saturation. Latency is the time it takes to service the alert. Traffic is how much demand is being placed on the system (how many alerts are going through at once). Errors are the rate of requests that fail. Saturation is a measure of the resources most constrained. Every microservice should also measure three key metrics: rate, errors, and duration. 
+- Reasonable SLOs: 
+    Availability: 99.95% successful HTTP 202 responses
+    Latency: 99% completed in < 20ms at peak 1,000 TPS
+    Frauds: 99% scored and alerted in < 200ms
+    Consumer lag < 1s for 99.9% of windows
+    Durability: 99.999% captured audit events replayable
+    Cache latency: 99% of feature lookups < 2ms
+
+
+```mermaid
+graph LR
+    subgraph Ingestion_SLO ["1. Ingestion Gateway (User-Facing Serving)"]
+        direction TB
+        I1["Availability: 99.95% successful HTTP 202 responses"]
+        I2["Latency: 99% completed in < 20ms at peak 1,000 TPS"]
+    end
+
+    subgraph Pipeline_SLO ["2. Fraud Detection & Alert Pipeline (Streaming)"]
+        direction TB
+        P1["End-to-End Latency: 99% scored & alerted in < 200ms"]
+        P2["Freshness / Lag: Consumer lag < 1s for 99.9% of windows"]
+    end
+
+    subgraph Storage_SLO ["3. Audit & Storage (Durability & State)"]
+        direction TB
+        S1["Durability: 99.9999% captured events replayable"]
+        S2["Cache Latency: 99% of feature lookups < 2ms"]
+    end
+
+    Ingestion_SLO --> Pipeline_SLO --> Storage_SLO
+```
+
+
+--- Suggest Stack ---
+
+- Apache Kafka: High throughout messaging.
+- PostgreSQL: Guarantees ACID transactions for payment receipts and analyst investigation tickets without risk of state corruption.
+- Redis: Delivers sub-2ms in-memory key-value lookups for customer history and feature validation.
+- Amazon S3 with Parquet: Provides durable, cost-effective, and long term immutable storage for compliance and ML model training.
+- WebSockets: Pushes alerts directly to the analyst frontend with minimal latency.
+- Kubernetes: Scales microservice pods dynamically to absorb 1,000 TPS spikes while keeping idle operating costs low.

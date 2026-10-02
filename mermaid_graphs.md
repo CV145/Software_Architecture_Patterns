@@ -1,18 +1,45 @@
 ```mermaid
 graph TD
-    subgraph "Deviation 1: Synchronous Ingress (HTTP POST)"
-        Bank["Bank Payment Gateway"] -->|"1. HTTP POST (Payment Request)"| S1["Transaction Ingestion Service"]
-        S1 -->|"2. HTTP 202 Accepted (Receipt ID)"| Bank
+    subgraph "Core Microservices"
+        S1["Transaction Ingestion Service<br/>(OTel SDK)"]
+        S2["Fraud Detection Service<br/>(OTel SDK)"]
+        S3["Alert Service<br/>(OTel SDK)"]
+        BFF["BFF Gateway<br/>(OTel SDK)"]
     end
 
-    subgraph "Deviation 2: Synchronous Feature Lookup (In-Memory Cache)"
-        S2["Fraud Detection Service"] -->|"1. Get Customer Velocity (< 2ms)"| Cache[("Fast In-Memory Cache / Redis")]
-        Cache -->|"2. Return Velocity Count"| S2
+    subgraph "Business & Audit Pipeline"
+        Kafka["Central Message Log (Kafka)"]
+        AuditService["Historical Analytics & Audit Service"]
+        AuditArchive[("Permanent Audit Archive<br/>(Immutable S3/Cold Storage)")]
+
+        S1 -->|"Business Events"| Kafka
+        Kafka -->|"Event Stream"| S2
+        Kafka -->|"Event Stream"| AuditService
+        AuditService -->|"Compliance Replay"| AuditArchive
     end
 
-    subgraph "Deviation 3: Synchronous Dashboard Lookups (REST API)"
-        Analyst["Fraud Analyst Screen"] -->|"1. GET /api/v1/cases/{id}"| CaseAPI["Case Management API"]
-        CaseAPI -->|"2. Return Case History JSON"| Analyst
+    subgraph "Observability Pipeline (Telemetry)"
+        OTelAgent["OTel Collector Agents<br/>(DaemonSet / Sidecars)"]
+        OTelGateway["Central OTel Gateway<br/>(Batching, Filtering, Tail Sampling)"]
+
+        S1 -.->|"OTLP (Logs, Metrics, Traces)"| OTelAgent
+        S2 -.->|"OTLP (Logs, Metrics, Traces)"| OTelAgent
+        S3 -.->|"OTLP (Logs, Metrics, Traces)"| OTelAgent
+        BFF -.->|"OTLP (Logs, Metrics, Traces)"| OTelAgent
+
+        OTelAgent -->|"OTLP"| OTelGateway
     end
 
+    subgraph "Observability Backends & Alerting"
+        MetricsDB[("Prometheus / Metrics Store")]
+        TracesDB[("Jaeger / Tracing Store")]
+        LogsDB[("Loki / Logs Store")]
+        Alerts["Alertmanager / Grafana<br/>(SLO Burn Rate & Golden Signals)"]
+
+        OTelGateway -->|"Export Metrics"| MetricsDB
+        OTelGateway -->|"Export Traces"| TracesDB
+        OTelGateway -->|"Export Logs"| LogsDB
+
+        MetricsDB -->|"Evaluate SLIs/SLOs"| Alerts
+    end
 ```
