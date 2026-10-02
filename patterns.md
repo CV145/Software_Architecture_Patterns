@@ -30,3 +30,16 @@ What are the core microservices?
 Microservice function, inputs and outputs are considered
 Inter-service communication and coupling is considered and discussed.)
 
+1. Transaction Input Service
+Input: Bank transaction
+Output: Transaction classified by machine learning model
+2. Fraud Detection Service
+Input: Classified transaction
+Output: Fraud score ( 0 to 100 confidence rating)
+3. Alert Service
+Input: Fraud detected? Yes.
+Output: An alert or investigation
+4. Historical Analytics and Audit Service
+Input: Transaction and fraud score
+Output: Datastore
+
